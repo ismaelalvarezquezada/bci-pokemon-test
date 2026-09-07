@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: List installed Xcode versions
+        run: ls /Applications | grep -i xcode
+
+      - name: Select newest available Xcode
+        run: |
+          newest=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
+          if [ -n "$newest" ]; then
+            sudo xcode-select -s "$newest"
+          fi
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: List available simulators
+        run: xcrun simctl list devices available
+
+      - name: Find an available iPhone simulator
+        id: simulator
+        run: |
+          udid=$(xcrun simctl list devices available -j \
+            | jq -r '.devices | to_entries[] | .value[] | select(.name | test("iPhone")) | .udid' \
+            | head -n 1)
+          if [ -z "$udid" ]; then
+            echo "No available iPhone simulator found" >&2
+            exit 1
+          fi
+          echo "udid=$udid" >> "$GITHUB_OUTPUT"
+
+      - name: Build and test
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project BCITest.xcodeproj \
+            -scheme BCITest \
+            -destination "id=${{ steps.simulator.outputs.udid }}" \
+            -sdk iphonesimulator
